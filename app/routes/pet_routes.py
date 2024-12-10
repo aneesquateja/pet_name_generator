@@ -2,11 +2,29 @@ from flask import Blueprint, request, abort, make_response
 from ..db import db
 from ..models.pet import Pet
 
+import google.generativeai as genai
+import os
+
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+
 bp = Blueprint("pets", __name__, url_prefix="/pets")
 
 @bp.post("")
 def create_pet():
-    pass
+    request_body = request.get_json()
+
+    try:
+        new_pet = Pet.from_dict(request_body)
+        generated_name = generate_name(new_pet)
+        new_pet.name = generated_name.strip("\"")
+
+        db.session.add(new_pet)
+        db.session.commit()
+
+        return new_pet.to_dict(), 201
+
+    except KeyError as e:
+        abort(make_response({"message": f"missing required value: {e}"}, 400))
 
 @bp.get("")
 def get_pets():
@@ -20,10 +38,38 @@ def get_pets():
 
     return response
 
-@bp.get("/<pet_id>")
+
 def get_single_pet(pet_id):
     pet = validate_model(Pet,pet_id)
     return pet.to_dict()
+
+
+@bp.post("/<pet_id>/generate")
+def add_name(pet_id):
+    pet_obj = validate_model(Pet, pet_id)
+    
+    if pet_obj.name:
+        return {"message": f"Name already generated for {pet_obj.name}"}, 201
+    
+    name = generate_name(pet_obj)
+    
+    db.session.add(name)
+    db.session.commit()
+    
+    return {"message": f"Name successfully added to {pet_obj.name}"}, 201
+   
+    
+def generate_name(pet):
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    input_message = f"I have a pet who has {pet.personality}.\
+    My pet's color is {pet.color} and species is {pet.animal_type}.\
+    Please generate only one unique and creative name for my pet without any message included."
+    
+    response = model.generate_content(input_message)
+    print(response)
+    response_split = response.text
+    
+    return response_split
 
 def validate_model(cls,id):
     try:
